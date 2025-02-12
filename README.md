@@ -87,6 +87,20 @@ $ python3 ./python/infer.py --source ./assets/examples/source/s0.jpg --driving .
 ![output_concat](assets/examples/result/s0--d8_concat_axmodel.jpg)
 ![output](assets/examples/result/s0--d8_axmodel.jpg)
 
+#### 模型推理耗时
+
+Model | Time |
+---| ---|
+feature_extractor.axmodel | 19.191 ms |
+motion_extractor.axmodel | 7.293 ms |
+spade_generator.axmodel | 227.790 ms |
+stitching_retargeting.axmodel | 0.047 ms |
+warp.axmodel | 编译失败 |
+
+程序上板运行时间: `26.677s`, 其中 axmodel 耗时: `254.321 ms`, `warp.onnx` 耗时 `13.840s`, 其他处理耗时: `12.582s`.
+
+程序在 `PC` 端 `onnx` 推理耗时: `5.626s`.
+
 ## 技术讨论
 
 - Github issues
