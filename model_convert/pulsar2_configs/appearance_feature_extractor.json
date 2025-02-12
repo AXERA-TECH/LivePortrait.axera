@@ -1,0 +1,42 @@
+  {
+  "model_type": "ONNX",
+  "output_dir": "./output",
+  "target_hardware": "M76H",
+  "npu_mode": "NPU3",
+  "quant": {
+    "input_configs": [
+      {
+        "tensor_name": "DEFAULT",
+        "calibration_dataset": "./datasets/appearance_feature_extractor.tar",
+        "calibration_format": "Numpy",
+        "calibration_size": -1
+      }
+    ],
+    "layer_configs": [
+      {       
+        "start_tensor_names": ["DEFAULT"],
+        "end_tensor_names":["DEFAULT"],
+        "data_type": "U16",       
+        "weight_data_type": "S32"
+      }
+    ],
+    "calibration_method": "MinMax",
+    "precision_analysis": true,
+    "precision_analysis_method": "PerLayer", // EndToEnd, PerLayer
+    "precision_analysis_mode": "NPUBackend"
+  },
+  "input_processors": [
+    {
+      "tensor_name": "DEFAULT",
+      "tensor_layout": "NCHW",
+      "tensor_format": "AutoColorSpace",
+      "src_format": "AutoColorSpace",
+      "src_dtype": "FP32",
+      "src_layout": "NCHW",
+      "csc_mode": "NoCSC"
+    }
+  ],
+  "compiler": {
+    "check": 2
+  }
+}

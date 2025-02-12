@@ -1,0 +1,31 @@
+  {
+  "model_type": "ONNX",
+  "output_dir": "./output",
+  "target_hardware": "M76H",
+  "npu_mode": "NPU3",
+  "quant": {
+    "input_configs": [
+      {
+        "tensor_name": "DEFAULT",
+        "calibration_dataset": "./datasets/feat_stiching.tar",
+        "calibration_format": "Numpy",
+        "calibration_size": -1
+      }
+    ],
+    "layer_configs": [
+      {       
+        "start_tensor_names": ["DEFAULT"],
+        "end_tensor_names":["DEFAULT"],
+        "data_type": "U16",       
+        "weight_data_type": "S32"
+      }
+    ],
+    "calibration_method": "MinMax",
+    "precision_analysis": true,
+    "precision_analysis_method": "PerLayer", // EndToEnd, PerLayer
+    "precision_analysis_mode": "NPUBackend"
+  },
+  "compiler": {
+    "check": 2
+  }
+}

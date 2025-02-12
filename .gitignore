@@ -1,0 +1,9 @@
+__pycache__
+*.tar
+build-output/
+*.onnx
+*.pth
+axmodel_infer/
+*.axmodel
+tmp/
+pretrained_weights/*
