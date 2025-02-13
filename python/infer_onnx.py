@@ -81,6 +81,12 @@ def images2video(images, wfp, **kwargs):
     writer.close()
 
 
+def is_template(file_path):
+    if file_path.endswith(".pkl"):
+        return True
+    return False
+
+
 def has_audio_stream(video_path: str) -> bool:
     """
     Check if the video file contains an audio stream.
@@ -371,6 +377,44 @@ def get_rotation_matrix(pitch_, yaw_, roll_):
 
     rot = rot_z @ rot_y @ rot_x
     return rot.permute(0, 2, 1)  # transpose
+
+
+def suffix(filename):
+    """a.jpg -> jpg"""
+    pos = filename.rfind(".")
+    if pos == -1:
+        return ""
+    return filename[pos + 1:]
+
+
+def remove_suffix(filepath):
+    """a/b/c.jpg -> a/b/c"""
+    return osp.join(osp.dirname(filepath), basename(filepath))
+
+
+def load(fp):
+    suffix_ = suffix(fp)
+
+    if suffix_ == "npy":
+        return np.load(fp)
+    elif suffix_ == "pkl":
+        return pkl.load(open(fp, "rb"))
+    else:
+        raise Exception(f"Unknown type: {suffix}")
+
+
+def dump(wfp, obj):
+    wd = osp.split(wfp)[0]
+    if wd != "" and not osp.exists(wd):
+        mkdir(wd)
+
+    _suffix = suffix(wfp)
+    if _suffix == "npy":
+        np.save(wfp, obj)
+    elif _suffix == "pkl":
+        pkl.dump(obj, open(wfp, "wb"))
+    else:
+        raise Exception("Unknown type: {}".format(_suffix))
 
 
 def make_abs_path(fn):
@@ -697,34 +741,63 @@ def main():
         )
 
     source_rgb_lst = preprocess(source)  # rgb, resize & limit
-    if is_video(args.driving):
-        flag_is_driving_video = True
-        # load from video file, AND make motion template
-        output_fps = int(get_fps(args.driving))
-        driving_rgb_lst = load_video(args.driving)
-    elif is_image(args.driving):
-        flag_is_driving_video = False
-        output_fps = 25
-        driving_rgb_lst = [load_image_rgb(driving)] # rgb
-    else:
-        raise Exception(f"{args.driving} is not a supported type!")
-
-    ######## make motion template ########
+    ######## process driving info ########
+    flag_load_from_template = is_template(args.driving)
+    driving_rgb_crop_256x256_lst = None
+    wfp_template = None
+    device = "cpu"
+    flag_is_source_video = False
     cropper: Cropper = Cropper()
-    logger.info("Start making driving motion template...")
-    driving_n_frames = len(driving_rgb_lst)
-    n_frames = driving_n_frames
-    driving_lmk_crop_lst = cropper.calc_lmks_from_cropped_video(driving_rgb_lst) # cropper.
-    driving_rgb_crop_256x256_lst = [cv2.resize(_, (256, 256)) for _ in driving_rgb_lst]  # force to resize to 256x256
-    #######################################
 
-    c_d_eyes_lst, c_d_lip_lst = calc_ratio(driving_lmk_crop_lst)
-    # save the motion template
-    I_d_lst = prepare_videos(driving_rgb_crop_256x256_lst)
-    driving_template_dct = make_motion_template(I_d_lst, c_d_eyes_lst, c_d_lip_lst, output_fps=output_fps)
-    # wfp_template = remove_suffix(args.driving) + '.pkl'
-    # dump(wfp_template, driving_template_dct)
-    # logger.info(f"Dump motion template to {wfp_template}")
+    if flag_load_from_template:
+        # NOTE: load from template, it is fast, but the cropping video is None
+        logger.info(f"Load from template: {args.driving}, NOT the video, so the cropping video and audio are both NULL.", style='bold green')
+        driving_template_dct = load(args.driving)
+        c_d_eyes_lst = driving_template_dct['c_eyes_lst'] if 'c_eyes_lst' in driving_template_dct.keys() else driving_template_dct['c_d_eyes_lst'] # compatible with previous keys
+        c_d_lip_lst = driving_template_dct['c_lip_lst'] if 'c_lip_lst' in driving_template_dct.keys() else driving_template_dct['c_d_lip_lst']
+        driving_n_frames = driving_template_dct['n_frames']
+        flag_is_driving_video = True if driving_n_frames > 1 else False
+        if flag_is_source_video and flag_is_driving_video:
+            n_frames = min(len(source_rgb_lst), driving_n_frames)  # minimum number as the number of the animated frames
+        elif flag_is_source_video and not flag_is_driving_video:
+            n_frames = len(source_rgb_lst)
+        else:
+            n_frames = driving_n_frames
+        # set output_fps
+        output_fps = driving_template_dct.get('output_fps', 25)
+        logger.info(f'The FPS of template: {output_fps}')
+        flag_crop_driving_video = False
+        if flag_crop_driving_video:
+            logger.info("Warning: flag_crop_driving_video is True, but the driving info is a template, so it is ignored.")
+    elif osp.exists(args.driving):
+        if is_video(args.driving):
+            flag_is_driving_video = True
+            # load from video file, AND make motion template
+            output_fps = int(get_fps(args.driving))
+            driving_rgb_lst = load_video(args.driving)
+        elif is_image(args.driving):
+            flag_is_driving_video = False
+            output_fps = 25
+            driving_rgb_lst = [load_image_rgb(driving)] # rgb
+        else:
+            raise Exception(f"{args.driving} is not a supported type!")
+        ######## make motion template ########
+        logger.info("Start making driving motion template...")
+        driving_n_frames = len(driving_rgb_lst)
+        n_frames = driving_n_frames
+        driving_lmk_crop_lst = cropper.calc_lmks_from_cropped_video(driving_rgb_lst) # cropper.
+        driving_rgb_crop_256x256_lst = [cv2.resize(_, (256, 256)) for _ in driving_rgb_lst]  # force to resize to 256x256
+        #######################################
+        c_d_eyes_lst, c_d_lip_lst = calc_ratio(driving_lmk_crop_lst)
+        # save the motion template
+        I_d_lst = prepare_videos(driving_rgb_crop_256x256_lst)
+
+        driving_template_dct = make_motion_template(I_d_lst, c_d_eyes_lst, c_d_lip_lst, output_fps=output_fps)
+        wfp_template = remove_suffix(args.driving) + '.pkl'
+        dump(wfp_template, driving_template_dct)
+        logger.info(f"Dump motion template to {wfp_template}")
+    else:
+        raise Exception(f"{args.driving} does not exist!")
 
     if not flag_is_driving_video:
         c_d_eyes_lst = c_d_eyes_lst * n_frames
@@ -765,8 +838,6 @@ def main():
 
     with open(make_abs_path('./utils/resources/lip_array.pkl'), 'rb') as f:
         lip_array = pkl.load(f)
-    device = "cpu"
-    flag_is_source_video = False
     ######## animate ########
     if flag_is_driving_video: #  or (flag_is_source_video and not flag_is_driving_video)
         logger.info(f"The animated video consists of {n_frames} frames.")
@@ -852,8 +923,8 @@ def main():
             logger.info(f"Replace {wfp_with_audio} with {wfp}")
 
         # final log
-        # if wfp_template not in (None, ''):
-        #     logger.info(f'Animated template: {wfp_template}, you can specify `-d` argument with this template path next time to avoid cropping video, motion making and protecting privacy.', style='bold green')
+        if wfp_template not in (None, ''):
+            logger.info(f'Animated template: {wfp_template}, you can specify `-d` argument with this template path next time to avoid cropping video, motion making and protecting privacy.', style='bold green')
         logger.info(f'Animated video: {wfp}')
         logger.info(f'Animated video with concat: {wfp_concat}')
     else:

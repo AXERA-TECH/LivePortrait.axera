@@ -3,7 +3,9 @@ __pycache__
 build-output/
 *.onnx
 *.pth
+*.pkl
 axmodel_infer/
+onnx-infer/
 *.axmodel
 tmp/
 pretrained_weights/*
