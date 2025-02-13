@@ -1,6 +1,6 @@
 # LivePortrait.axera
 
-> KwaiVGI LivePortrait DEMO on Axera
+> [KwaiVGI LivePortrait](https://github.com/KwaiVGI/LivePortrait) DEMO on Axera
 
 - 目前支持 `Python` 语言, `C++` 代码在开发中
 - 预编译模型下载 [models](https://github.com/AXERA-TECH/LivePortrait.axera/releases/download/v1.0.0/download_models.tar), 如需自行转换请参考 [模型转换](/model_convert/README.md)
