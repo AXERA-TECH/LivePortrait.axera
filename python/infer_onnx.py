@@ -13,9 +13,15 @@ import pickle as pkl
 import torch
 import torch.nn.functional as F
 from cropper import Cropper
+import imageio
+import subprocess
+from utils.timer import Timer
+from typing import Union
+from scipy.spatial import ConvexHull # pylint: disable=E0401,E0611
 
 
 appearance_feature_extractor, motion_extractor, warping_module, spade_generator, stitching_retargeting_module = None, None, None, None, None
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -48,6 +54,137 @@ def parse_args() -> argparse.Namespace:
     )
     
     return parser.parse_args()
+
+
+def images2video(images, wfp, **kwargs):
+    fps = kwargs.get('fps', 30)
+    video_format = kwargs.get('format', 'mp4')  # default is mp4 format
+    codec = kwargs.get('codec', 'libx264')  # default is libx264 encoding
+    quality = kwargs.get('quality')  # video quality
+    pixelformat = kwargs.get('pixelformat', 'yuv420p')  # video pixel format
+    image_mode = kwargs.get('image_mode', 'rgb')
+    macro_block_size = kwargs.get('macro_block_size', 2)
+    ffmpeg_params = ['-crf', str(kwargs.get('crf', 18))]
+
+    writer = imageio.get_writer(
+        wfp, fps=fps, format=video_format,
+        codec=codec, quality=quality, ffmpeg_params=ffmpeg_params, pixelformat=pixelformat, macro_block_size=macro_block_size
+    )
+
+    n = len(images)
+    for i in range(n):
+        if image_mode.lower() == 'bgr':
+            writer.append_data(images[i][..., ::-1])
+        else:
+            writer.append_data(images[i])
+
+    writer.close()
+
+
+def has_audio_stream(video_path: str) -> bool:
+    """
+    Check if the video file contains an audio stream.
+
+    :param video_path: Path to the video file
+    :return: True if the video contains an audio stream, False otherwise
+    """
+    if osp.isdir(video_path):
+        return False
+
+    cmd = [
+        'ffprobe',
+        '-v', 'error',
+        '-select_streams', 'a',
+        '-show_entries', 'stream=codec_type',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        f'"{video_path}"'
+    ]
+
+    try:
+        # result = subprocess.run(cmd, capture_output=True, text=True)
+        result = exec_cmd(' '.join(cmd))
+        if result.returncode != 0:
+            logger.info(f"Error occurred while probing video: {result.stderr}")
+            return False
+
+        # Check if there is any output from ffprobe command
+        return bool(result.stdout.strip())
+    except Exception as e:
+        logger.info(
+            f"Error occurred while probing video: {video_path}, "
+            "you may need to install ffprobe! (https://ffmpeg.org/download.html) "
+            "Now set audio to false!",
+            style="bold red"
+        )
+    return False
+
+
+def tensor_to_numpy(data: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
+    """transform torch.Tensor into numpy.ndarray"""
+    if isinstance(data, torch.Tensor):
+        return data.data.cpu().numpy()
+    return data
+
+
+def calc_motion_multiplier(
+    kp_source: Union[np.ndarray, torch.Tensor],
+    kp_driving_initial: Union[np.ndarray, torch.Tensor]
+) -> float:
+    """calculate motion_multiplier based on the source image and the first driving frame"""
+    kp_source_np = tensor_to_numpy(kp_source)
+    kp_driving_initial_np = tensor_to_numpy(kp_driving_initial)
+
+    source_area = ConvexHull(kp_source_np.squeeze(0)).volume
+    driving_area = ConvexHull(kp_driving_initial_np.squeeze(0)).volume
+    motion_multiplier = np.sqrt(source_area) / np.sqrt(driving_area)
+    # motion_multiplier = np.cbrt(source_area) / np.cbrt(driving_area)
+
+    return motion_multiplier
+
+
+def load_video(video_info, n_frames=-1):
+    reader = imageio.get_reader(video_info, "ffmpeg")
+
+    ret = []
+    for idx, frame_rgb in enumerate(reader):
+        if n_frames > 0 and idx >= n_frames:
+            break
+        ret.append(frame_rgb)
+
+    reader.close()
+    return ret
+
+
+def fast_check_ffmpeg():
+    try:
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+        return True
+    except:
+        return False
+
+
+def is_video(file_path):
+    if file_path.lower().endswith((".mp4", ".mov", ".avi", ".webm")) or osp.isdir(file_path):
+        return True
+    return False
+
+
+def is_image(file_path):
+    image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp')
+    return file_path.lower().endswith(image_extensions)
+
+
+def get_fps(filepath, default_fps=25):
+    try:
+        fps = cv2.VideoCapture(filepath).get(cv2.CAP_PROP_FPS)
+
+        if fps in (0, None):
+            fps = default_fps
+    except Exception as e:
+        logger.info(e)
+        fps = default_fps
+
+    return fps
 
 
 def calculate_distance_ratio(lmk: np.ndarray, idx1: int, idx2: int, idx3: int, idx4: int, eps: float = 1e-6) -> np.ndarray:
@@ -395,11 +532,11 @@ def transform_keypoint(kp_info: dict):
     return kp_transformed
 
 
-def make_motion_template(I_lst, c_eyes_lst, c_lip_lst):
+def make_motion_template(I_lst, c_eyes_lst, c_lip_lst, **kwargs):
     n_frames = I_lst.shape[0]
     template_dct = {
         'n_frames': n_frames,
-        'output_fps': 25,
+        'output_fps': kwargs.get('output_fps', 25),
         'motion': [],
         'c_eyes_lst': [],
         'c_lip_lst': [],
@@ -550,8 +687,27 @@ def main():
     source = args.source
     driving = args.driving
 
+    ffmpeg_dir = os.path.join(os.getcwd(), "ffmpeg")
+    if osp.exists(ffmpeg_dir):
+        os.environ["PATH"] += (os.pathsep + ffmpeg_dir)
+
+    if not fast_check_ffmpeg():
+        raise ImportError(
+            "FFmpeg is not installed. Please install FFmpeg (including ffmpeg and ffprobe) before running this script. https://ffmpeg.org/download.html"
+        )
+
     source_rgb_lst = preprocess(source)  # rgb, resize & limit
-    driving_rgb_lst = [load_image_rgb(driving)] # rgb
+    if is_video(args.driving):
+        flag_is_driving_video = True
+        # load from video file, AND make motion template
+        output_fps = int(get_fps(args.driving))
+        driving_rgb_lst = load_video(args.driving)
+    elif is_image(args.driving):
+        flag_is_driving_video = False
+        output_fps = 25
+        driving_rgb_lst = [load_image_rgb(driving)] # rgb
+    else:
+        raise Exception(f"{args.driving} is not a supported type!")
 
     ######## make motion template ########
     cropper: Cropper = Cropper()
@@ -565,13 +721,14 @@ def main():
     c_d_eyes_lst, c_d_lip_lst = calc_ratio(driving_lmk_crop_lst)
     # save the motion template
     I_d_lst = prepare_videos(driving_rgb_crop_256x256_lst)
-    driving_template_dct = make_motion_template(I_d_lst, c_d_eyes_lst, c_d_lip_lst)
+    driving_template_dct = make_motion_template(I_d_lst, c_d_eyes_lst, c_d_lip_lst, output_fps=output_fps)
     # wfp_template = remove_suffix(args.driving) + '.pkl'
     # dump(wfp_template, driving_template_dct)
     # logger.info(f"Dump motion template to {wfp_template}")
 
-    c_d_eyes_lst = c_d_eyes_lst * n_frames
-    c_d_lip_lst = c_d_lip_lst * n_frames
+    if not flag_is_driving_video:
+        c_d_eyes_lst = c_d_eyes_lst * n_frames
+        c_d_lip_lst = c_d_lip_lst * n_frames
 
     I_p_pstbk_lst = []
     logger.info("Prepared pasteback mask done.")
@@ -611,7 +768,10 @@ def main():
     device = "cpu"
     flag_is_source_video = False
     ######## animate ########
-    logger.info(f"The output of image-driven portrait animation is an image.")
+    if flag_is_driving_video: #  or (flag_is_source_video and not flag_is_driving_video)
+        logger.info(f"The animated video consists of {n_frames} frames.")
+    else:
+        logger.info(f"The output of image-driven portrait animation is an image.")
     for i in range(n_frames):
         x_d_i_info = driving_template_dct['motion'][i]
         x_d_i_info = dct2device(x_d_i_info, device)
@@ -623,11 +783,22 @@ def main():
 
         delta_new = x_s_info['exp'].clone()
         R_new = x_d_r_lst_smooth[i] if flag_is_source_video else (R_d_i @ R_d_0.permute(0, 2, 1)) @ R_s
-        delta_new = x_s_info['exp'] + (x_d_i_info['exp'] - torch.from_numpy(lip_array).to(dtype=torch.float32, device=device))
+        if flag_is_driving_video:
+            delta_new = x_s_info['exp'] + (x_d_i_info['exp'] - x_d_0_info['exp'])
+        else:
+            delta_new = x_s_info['exp'] + (x_d_i_info['exp'] - torch.from_numpy(lip_array).to(dtype=torch.float32, device=device))
+        # delta_new = x_s_info['exp'] + (x_d_i_info['exp'] - torch.from_numpy(lip_array).to(dtype=torch.float32, device=device))
         scale_new = x_s_info['scale'] if flag_is_source_video else x_s_info['scale'] * (x_d_i_info['scale'] / x_d_0_info['scale'])
         t_new = x_s_info['t'] if flag_is_source_video else x_s_info['t'] + (x_d_i_info['t'] - x_d_0_info['t'])
         t_new[..., 2].fill_(0)  # zero tz
         x_d_i_new = scale_new * (x_c_s @ R_new + delta_new) + t_new
+
+        if i == 0 and flag_is_driving_video:
+            x_d_0_new = x_d_i_new
+            motion_multiplier = calc_motion_multiplier(x_s, x_d_0_new)
+            # motion_multiplier *= inf_cfg.driving_multiplier
+            x_d_diff = (x_d_i_new - x_d_0_new) * motion_multiplier
+            x_d_i_new = x_d_diff + x_s
 
         # Algorithm 1:
         # with stitching and without retargeting
@@ -645,14 +816,57 @@ def main():
     # driving frame | source frame | generation
     frames_concatenated = concat_frames(driving_rgb_crop_256x256_lst, [img_crop_256x256], I_p_lst)
 
-    wfp_concat = osp.join(args.output_dir, f'{basename(source)}--{basename(driving)}_concat.jpg')
-    cv2.imwrite(wfp_concat, frames_concatenated[0][..., ::-1])
-    wfp = osp.join(args.output_dir, f'{basename(source)}--{basename(driving)}.jpg')
-    cv2.imwrite(wfp, I_p_pstbk_lst[0][..., ::-1])
+    if flag_is_driving_video or (flag_is_source_video and not flag_is_driving_video):
+        flag_source_has_audio = flag_is_source_video and has_audio_stream(args.source)
+        flag_driving_has_audio = has_audio_stream(args.driving)
 
-    # final log
-    logger.info(f'Animated image: {wfp}')
-    logger.info(f'Animated image with concat: {wfp_concat}')
+        wfp_concat = osp.join(args.output_dir, f'{basename(args.source)}--{basename(args.driving)}_concat.mp4')
+
+        # NOTE: update output fps
+        output_fps = source_fps if flag_is_source_video else output_fps
+        images2video(frames_concatenated, wfp=wfp_concat, fps=output_fps)
+
+        if flag_source_has_audio or flag_driving_has_audio:
+            # final result with concatenation
+            wfp_concat_with_audio = osp.join(args.output_dir, f'{basename(args.source)}--{basename(args.driving)}_concat_with_audio.mp4')
+            audio_from_which_video = args.driving if ((flag_driving_has_audio and args.audio_priority == 'driving') or (not flag_source_has_audio)) else args.source
+            logger.info(f"Audio is selected from {audio_from_which_video}, concat mode")
+            add_audio_to_video(wfp_concat, audio_from_which_video, wfp_concat_with_audio)
+            os.replace(wfp_concat_with_audio, wfp_concat)
+            logger.info(f"Replace {wfp_concat_with_audio} with {wfp_concat}")
+
+        # save the animated result
+        wfp = osp.join(args.output_dir, f'{basename(args.source)}--{basename(args.driving)}.mp4')
+        if I_p_pstbk_lst is not None and len(I_p_pstbk_lst) > 0:
+            images2video(I_p_pstbk_lst, wfp=wfp, fps=output_fps)
+        else:
+            images2video(I_p_lst, wfp=wfp, fps=output_fps)
+
+        ######### build the final result #########
+        if flag_source_has_audio or flag_driving_has_audio:
+            wfp_with_audio = osp.join(args.output_dir, f'{basename(args.source)}--{basename(args.driving)}_with_audio.mp4')
+            audio_from_which_video = args.driving if ((flag_driving_has_audio and args.audio_priority == 'driving') or (not flag_source_has_audio)) else args.source
+            logger.info(f"Audio is selected from {audio_from_which_video}")
+            add_audio_to_video(wfp, audio_from_which_video, wfp_with_audio)
+            os.replace(wfp_with_audio, wfp)
+            logger.info(f"Replace {wfp_with_audio} with {wfp}")
+
+        # final log
+        # if wfp_template not in (None, ''):
+        #     logger.info(f'Animated template: {wfp_template}, you can specify `-d` argument with this template path next time to avoid cropping video, motion making and protecting privacy.', style='bold green')
+        logger.info(f'Animated video: {wfp}')
+        logger.info(f'Animated video with concat: {wfp_concat}')
+    else:
+        wfp_concat = osp.join(args.output_dir, f'{basename(source)}--{basename(driving)}_concat.jpg')
+        cv2.imwrite(wfp_concat, frames_concatenated[0][..., ::-1])
+        wfp = osp.join(args.output_dir, f'{basename(source)}--{basename(driving)}.jpg')
+        if I_p_pstbk_lst is not None and len(I_p_pstbk_lst) > 0:
+            cv2.imwrite(wfp, I_p_pstbk_lst[0][..., ::-1])
+        else:
+            cv2.imwrite(wfp, frames_concatenated[0][..., ::-1])
+        # final log
+        logger.info(f'Animated image: {wfp}')
+        logger.info(f'Animated image with concat: {wfp_concat}')
 
 
 if __name__ == "__main__":
@@ -660,4 +874,8 @@ if __name__ == "__main__":
     Usage:
         python3 infer_onnx.py --source ../assets/examples/source/s0.jpg --driving ../assets/examples/driving/d8.jpg --models onnx-models --output-dir output
     """
+    timer = Timer()
+    timer.tic()
     main()
+    elapse = timer.toc()
+    logger.debug(f'LivePortrait onnx infer time: {elapse:.3f}s')

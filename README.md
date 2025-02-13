@@ -87,7 +87,21 @@ $ python3 ./python/infer.py --source ./assets/examples/source/s0.jpg --driving .
 ![output_concat](assets/examples/result/s0--d8_concat_axmodel.jpg)
 ![output](assets/examples/result/s0--d8_axmodel.jpg)
 
+当 `driving` 为视频格式输入, 示例如下:
+
+```sh
+$ cd LivePortrait.axera
+$ python3 ./python/infer.py --source ./assets/examples/source/s0.jpg --driving ./assets/examples/driving/d0.mp4 --models ./python/axmodels/ --output-dir ./axmodel_infer
+``` 
+
+`axmodel-infer` 输出结果如下:
+
+![output_concat](assets/examples/result/s0--d0_concat_axmodel.mp4)
+![output](assets/examples/result/s0--d0_axmodel.mp4)
+
 #### 模型推理耗时
+
+##### Drving 为图像
 
 Model | Time |
 ---| ---|
@@ -99,7 +113,11 @@ warp.axmodel | 编译失败 |
 
 程序上板运行时间: `26.677s`, 其中 axmodel 耗时: `254.321 ms`, `warp.onnx` 耗时 `13.840s`, 其他处理耗时: `12.582s`.
 
-程序在 `PC` 端 `onnx` 推理耗时: `5.626s`.
+程序在 `PC` 端 `onnx` 推理耗时: `5.626s`. 板端 `onnx` 推理耗时: `205.338s`.
+
+##### Drving 为 `78` 帧视频
+
+程序在 `PC` 端 `onnx` 推理耗时: `175.825s`. 板端 `axmodel` 推理耗时: `1316.270s`.
 
 ## 技术讨论
 
