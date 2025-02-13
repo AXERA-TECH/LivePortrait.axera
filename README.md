@@ -96,8 +96,13 @@ $ python3 ./python/infer.py --source ./assets/examples/source/s0.jpg --driving .
 
 `axmodel-infer` 输出结果如下:
 
-![output_concat](assets/examples/result/s0--d0_concat_axmodel.mp4)
-![output](assets/examples/result/s0--d0_axmodel.mp4)
+**s0--d0_concat_axmodel**
+
+https://github.com/user-attachments/assets/2c2a1380-a686-498d-bab7-1cf4f990edaf
+
+**s0--d0_axmodel**
+
+https://github.com/user-attachments/assets/873cec20-0e85-44df-9811-cd3a2aaa7730
 
 #### 模型推理耗时
 
