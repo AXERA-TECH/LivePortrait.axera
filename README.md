@@ -9,7 +9,6 @@
 ## 支持平台
 
 - [x] AX650N
-- [ ] AX630C
 
 ## Git Clone
 
