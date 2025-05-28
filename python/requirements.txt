@@ -7,3 +7,4 @@ numpy
 loguru
 imageio[ffmpeg]
 ffprobe-python
+scikit-image
