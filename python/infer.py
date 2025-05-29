@@ -481,8 +481,9 @@ def get_kp_info(x: torch.Tensor) -> dict:
     flag_refine_info: whether to trandform the pose to degrees and the dimention of the reshape
     return: A dict contains keys: 'pitch', 'yaw', 'roll', 't', 'exp', 'scale', 'kp'
     """
-    outs = motion_extractor.run(input_feed={"input": x.numpy()}) # TODO: axengine 中的 run 输入参数与 ort 还是些许不同
-    outs = list(outs.values())
+    outs = motion_extractor.run(None, input_feed={"input": x.numpy()}) # TODO: axengine 中的 run 输入参数与 ort 还是些许不同
+    # import pdb; pdb.set_trace()
+    # outs = list(outs.values())
     kp_info = {}
     kp_info['pitch'] = torch.from_numpy(outs[0])
     kp_info['yaw'] = torch.from_numpy(outs[1])
@@ -595,8 +596,9 @@ def extract_feature_3d(x: torch.Tensor) -> torch.Tensor:
     """ get the appearance feature of the image by F
     x: Bx3xHxW, normalized to 0~1
     """
-    outs = appearance_feature_extractor.run(input_feed={"input": x.numpy()})
-    outs = list(outs.values())[0]
+    outs = appearance_feature_extractor.run(None, input_feed={"input": x.numpy()})[0]
+    # outs = list(outs.values())[0]
+    # import pdb; pdb.set_trace()
     return torch.from_numpy(outs)
 
 
@@ -607,8 +609,8 @@ def stitch(kp_source: torch.Tensor, kp_driving: torch.Tensor) -> torch.Tensor:
     Return: Bx(3*num_kp+2)
     """
     feat_stiching = concat_feat(kp_source, kp_driving)
-    delta = stitching_retargeting_module.run(input_feed={"input": feat_stiching.numpy()})
-    delta = list(delta.values())[0]
+    delta = stitching_retargeting_module.run(None, input_feed={"input": feat_stiching.numpy()})[0]
+    # delta = list(delta.values())[0]
     return torch.from_numpy(delta)
 
 
@@ -644,8 +646,8 @@ def warp_decode(feature_3d: torch.Tensor, kp_source: torch.Tensor, kp_driving: t
     warp_timer.toc()
     logger.debug(f'warp time: {warp_timer.diff:.3f}s')
     # outs = warping_module.run(input_feed={"feature_3d": feature_3d.numpy(), "kp_driving": kp_driving.numpy(), "kp_source": kp_source.numpy()})['out']
-    outs = spade_generator.run(input_feed={"input":  outs})
-    outs = list(outs.values())[0]
+    outs = spade_generator.run(None, input_feed={"input":  outs})[0]
+    # outs = list(outs.values())[0]
     ret_dct = {}
     ret_dct['out'] = torch.from_numpy(outs)
     return ret_dct
@@ -664,16 +666,16 @@ def parse_output(out: torch.Tensor) -> np.ndarray:
 
 def load_model(model_type, model_path=None):
     if model_type == 'appearance_feature_extractor':
-        model = InferenceSession.load_from_model(f"{model_path}/feature_extractor.axmodel")
+        model = InferenceSession(f"{model_path}/feature_extractor.axmodel")
     elif model_type == 'motion_extractor':
-        model = InferenceSession.load_from_model(f'{model_path}/motion_extractor.axmodel')
+        model = InferenceSession(f'{model_path}/motion_extractor.axmodel')
     elif model_type == 'warping_module':
         model = ort.InferenceSession(f'{model_path}/warp.onnx', providers=["CPUExecutionProvider"])
-        # model = InferenceSession.load_from_model(f'{model_path}/warp.axmodel')
+        # model = InferenceSession(f'{model_path}/warp.axmodel')
     elif model_type == 'spade_generator':
-        model = InferenceSession.load_from_model(f'{model_path}/spade_generator.axmodel')
+        model = InferenceSession(f'{model_path}/spade_generator.axmodel')
     elif model_type == 'stitching_retargeting_module':
-        model = InferenceSession.load_from_model(f'{model_path}/stitching_retargeting.axmodel')
+        model = InferenceSession(f'{model_path}/stitching_retargeting.axmodel')
     return model
 
 
@@ -883,10 +885,10 @@ def main():
 if __name__ == "__main__":
     """
     Usage:
-        python3 infer_onnx.py --source ../assets/examples/source/s0.jpg --driving ../assets/examples/driving/d8.jpg --models onnx-models --output-dir output
+        python3 infer.py --source ../assets/examples/source/s0.jpg --driving ../assets/examples/driving/d8.jpg --models ./axmdoels --output-dir ./axmodel_infer
     """
     timer = Timer()
     timer.tic()
     main()
     elapse = timer.toc()
-    logger.debug(f'LivePortrait onnx infer time: {elapse:.3f}s')
+    logger.debug(f'LivePortrait axmodel infer time: {elapse:.3f}s')
